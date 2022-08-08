@@ -2133,10 +2133,10 @@ static void mtk_color_config(struct mtk_ddp_comp *comp,
 		       comp->regs_pa + DISP_COLOR_HEIGHT(color), cfg->h, ~0);
 
 	// set color_8bit_switch register
-	if (cfg->bpc == 8)
+	if (cfg->source_bpc == 8)
 		cmdq_pkt_write(handle, comp->cmdq_base,
 			comp->regs_pa + DISP_COLOR_CFG_MAIN, (0x1 << 25), (0x1 << 25));
-	else if (cfg->bpc == 10)
+	else if (cfg->source_bpc == 10)
 		cmdq_pkt_write(handle, comp->cmdq_base,
 			comp->regs_pa + DISP_COLOR_CFG_MAIN, (0x0 << 25), (0x1 << 25));
 	else
@@ -2432,7 +2432,7 @@ static bool color_get_DISP_CCORR2_REG(struct resource *res)
 	int rc = 0;
 	struct device_node *node = NULL;
 
-	node = of_find_compatible_node(NULL, NULL, "mediatek,disp_ccorr2");
+	node = of_find_compatible_node(NULL, NULL, "mediatek,disp_ccorr3");
 	rc = of_address_to_resource(node, 0, res);
 
 	// check if fail to get reg.
@@ -2994,10 +2994,10 @@ int mtk_drm_ioctl_read_reg(struct drm_device *dev, void *data,
 		rParams->val = readl(va) & rParams->mask;
 
 		// For CCORR COEF, real values need to right shift one bit
-		if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
+	/*	if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
 			pa <= ccorr_comp->regs_pa + CCORR_REG(4))
 			rParams->val = rParams->val >> 1;
-
+	*/
 		spin_unlock_irqrestore(&g_color_clock_lock, flags);
 	} else {
 		DDPINFO("%s @ %d......... Failed to spin_trylock_irqsave ",
@@ -3038,10 +3038,11 @@ int mtk_drm_ioctl_write_reg(struct drm_device *dev, void *data,
 		return -EFAULT;
 	}
 
-	// For 6885 CCORR COEF, real values need to left shift one bit
+/*	// For 6885 CCORR COEF, real values need to left shift one bit
 	if (pa >= ccorr_comp->regs_pa + CCORR_REG(0) &&
 		pa <= ccorr_comp->regs_pa + CCORR_REG(4))
 		wParams->val = wParams->val << 1;
+	*/
 
 	return mtk_crtc_user_cmd(crtc, comp, WRITE_REG, data);
 }
@@ -3304,6 +3305,12 @@ static int mtk_color_user_cmd(struct mtk_ddp_comp *comp,
 				} else if (tablet_index == TUNING_DISP_C3D) {
 					if (color_get_DISP_C3D1_REG(&res))
 						pa1 =  res.start + offset;
+				} else if (tablet_index == TUNING_DISP_CCORR1) {
+					if (color_get_DISP_CCORR2_REG(&res))
+						pa1 = res.start + offset;
+					else if (color_get_DISP_CCORR1_REG(&res))
+						pa1 =  res.start + offset;
+
 				}
 				if (pa) {
 					cmdq_pkt_write(handle, comp->cmdq_base,

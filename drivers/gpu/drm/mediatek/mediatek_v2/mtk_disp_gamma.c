@@ -57,7 +57,7 @@ static unsigned int g_gamma_relay_value[DISP_GAMMA_TOTAL];
 // It's a work around for no comp assigned in functions.
 static struct mtk_ddp_comp *default_comp;
 
-static unsigned int g_gamma_data_mode;
+unsigned int g_gamma_data_mode;
 
 struct gamma_color_protect {
 	unsigned int gamma_color_protect_support;
@@ -567,6 +567,8 @@ static void mtk_gamma_set(struct mtk_ddp_comp *comp,
 	}
 }
 
+#if 0
+
 static void calculateGammaLut(struct DISP_GAMMA_LUT_T *data)
 {
 	int i;
@@ -643,7 +645,7 @@ void mtk_trans_gain_to_gamma(struct drm_crtc *crtc,
 		}
 	}
 }
-
+#endif
 static int mtk_gamma_user_cmd(struct mtk_ddp_comp *comp,
 	struct cmdq_pkt *handle, unsigned int cmd, void *data)
 {

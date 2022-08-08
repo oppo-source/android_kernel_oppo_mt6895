@@ -370,6 +370,19 @@ struct mtk_cam_img_working_buf_pool {
 	struct mtk_cam_working_buf_list cam_freeimglist;
 };
 
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+struct mtk_cam_watchdog_data {
+	struct mtk_cam_ctx *ctx;
+	int pipe_id;
+	atomic_t watchdog_timeout_cnt;
+	atomic_t watchdog_cnt;
+	atomic_t watchdog_dumped;
+	atomic_t watchdog_dump_cnt;
+	struct work_struct watchdog_work;
+	u64 watchdog_time_diff_ns;
+};
+#endif
+
 struct mtk_cam_device;
 struct mtk_camsys_ctrl;
 
@@ -411,6 +424,7 @@ struct mtk_cam_ctx {
 	struct workqueue_struct *sv_wq;
 
 	struct completion session_complete;
+	struct completion watchdog_complete;
 	struct completion m2m_complete;
 	int session_created;
 	struct work_struct session_work;
@@ -436,6 +450,8 @@ struct mtk_cam_ctx {
 	struct mtk_cam_working_buf_list processing_img_buffer_list;
 
 	atomic_t enqueued_frame_seq_no;
+	atomic_t composed_delay_seq_no;
+	u64 composed_delay_sof_tsns;
 	unsigned int composed_frame_seq_no;
 	unsigned int dequeued_frame_seq_no;
 	unsigned int component_dequeued_frame_seq_no;
@@ -454,15 +470,24 @@ struct mtk_cam_ctx {
 
 	spinlock_t streaming_lock;
 	spinlock_t first_cq_lock;
+	struct mutex cleanup_lock;
 
 	struct mtk_cam_hsf_ctrl *hsf;
-	atomic_t watchdog_timeout_cnt;
-	atomic_t watchdog_cnt;
-	atomic_t watchdog_dumped;
-	atomic_t watchdog_dump_cnt;
-	u64 watchdog_time_diff_ns;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/* Watchdog data */
+	spinlock_t watchdog_pipe_lock;
+	unsigned int enabled_watchdog_pipe;
 	struct timer_list watchdog_timer;
-	struct work_struct watchdog_work;
+	struct mtk_cam_watchdog_data watchdog_data[MTKCAM_SUBDEV_MAX];
+#else
+    atomic_t watchdog_timeout_cnt;
+    atomic_t watchdog_cnt;
+    atomic_t watchdog_dumped;
+    atomic_t watchdog_dump_cnt;
+    u64 watchdog_time_diff_ns;
+    struct timer_list watchdog_timer;
+    struct work_struct watchdog_work;
+#endif
 
 	/* To support debug dump */
 	struct mtkcam_ipi_config_param config_params;
@@ -483,6 +508,11 @@ struct mtk_cam_device {
 	//struct platform_device *scp_pdev; /* only for scp case? */
 	phandle rproc_phandle;
 	struct rproc *rproc_handle;
+
+	#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	phandle rproc_ccu_phandle;
+	struct rproc *rproc_ccu_handle;
+	#endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
 	struct workqueue_struct *link_change_wq;
 	unsigned int composer_cnt;
@@ -841,9 +871,15 @@ void mtk_cam_complete_sensor_hdl(struct mtk_cam_request_stream_data *s_data);
 int mtk_cam_ctx_stream_on(struct mtk_cam_ctx *ctx);
 int mtk_cam_ctx_stream_off(struct mtk_cam_ctx *ctx);
 bool watchdog_scenario(struct mtk_cam_ctx *ctx);
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+void mtk_ctx_watchdog_kick(struct mtk_cam_ctx *ctx, int pipe_id);
+void mtk_ctx_watchdog_start(struct mtk_cam_ctx *ctx, int timeout_cnt, int pipe_id);
+void mtk_ctx_watchdog_stop(struct mtk_cam_ctx *ctx, int pipe_id);
+#else
 void mtk_ctx_watchdog_kick(struct mtk_cam_ctx *ctx);
 void mtk_ctx_watchdog_start(struct mtk_cam_ctx *ctx, int timeout_cnt);
 void mtk_ctx_watchdog_stop(struct mtk_cam_ctx *ctx);
+#endif
 
 int mtk_cam_call_seninf_set_pixelmode(struct mtk_cam_ctx *ctx,
 				      struct v4l2_subdev *sd,
@@ -914,6 +950,6 @@ void isp_composer_destroy_session(struct mtk_cam_ctx *ctx);
 int PipeIDtoTGIDX(int pipe_id);
 void mstream_seamless_buf_update(struct mtk_cam_ctx *ctx,
 				struct mtk_cam_request *req, int pipe_id,
-				int previous_feature);
+				int prev_feature);
 
 #endif /*__MTK_CAM_H*/

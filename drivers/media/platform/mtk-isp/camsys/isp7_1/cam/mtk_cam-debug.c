@@ -885,15 +885,15 @@ static void mtk_cam_exception_work(struct work_struct *work)
 	dev_info(ctx->cam->dev, "%s:camsys dump, %s\n",
 		 __func__, warn_desc);
 
-	if (dbg_work->smi_dump)
-		mtk_smi_dbg_hang_detect("camsys");
 
 #if IS_ENABLED(CONFIG_MTK_AEE_FEATURE)
-	aee_kernel_warning_api(__FILE__, __LINE__, DB_OPT_DEFAULT, title_desc,
+	aee_kernel_exception_api(__FILE__, __LINE__, DB_OPT_DEFAULT, title_desc,
 			       warn_desc);
 #else
 	WARN_ON(1);
 #endif
+    if(dbg_work->smi_dump)
+        mtk_smi_dbg_hang_detect("camsys");
 
 	atomic_set(&dbg_work->state, MTK_CAM_REQ_DBGWORK_S_FINISHED);
 }
@@ -976,7 +976,7 @@ static void mtk_cam_exceptoin_detect_work(struct work_struct *work)
 	}
 
 	if (ctx->seninf) {
-		ret = mtk_cam_seninf_dump(ctx->seninf, s_data->frame_seq_no);
+		ret = mtk_cam_seninf_dump(ctx->seninf, s_data->frame_seq_no, false);
 		dev_info(ctx->cam->dev,
 			"%s:ctx(%d):used_raw(0x%x) frame_seq_no(%d):mtk_cam_seninf_dump() ret=%d\n",
 			__func__, ctx->stream_id, ctx->used_raw_dev, s_data->frame_seq_no, ret);
@@ -1089,6 +1089,21 @@ mtk_cam_debug_detect_dequeue_failed(struct mtk_cam_request_stream_data *s_data,
 			 s_data->frame_seq_no, s_data->state.estate, irq_info->ts_ns / 1000);
 		}
 	}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+	/*extisp debug dump case*/
+	if (s_data->state.estate == E_STATE_EXTISP_OUTER ||
+	    s_data->state.estate == E_STATE_EXTISP_INNER) {
+		s_data->no_frame_done_cnt++;
+		if (s_data->no_frame_done_cnt > 1) {
+			dev_info(ctx->cam->dev,
+			 "%s:EXTISP-SOF[ctx:%d-#%d] no p1 done for %d sofs, FBC_CNT %d dump req(%d) state(%d) ts(%lu)\n",
+			 req->req.debug_str, ctx->stream_id,
+			 ctx->dequeued_frame_seq_no,
+			 s_data->no_frame_done_cnt, irq_info->fbc_cnt,
+			 s_data->frame_seq_no, s_data->state.estate, irq_info->ts_ns / 1000);
+		}
+	}
+#endif
 	if (s_data->no_frame_done_cnt >= NO_P1_DONE_DEBUG_START) {
 		dev_info(raw_dev->dev,
 			 "INT_EN %x\n",
@@ -1160,7 +1175,7 @@ static void mtk_cam_req_seninf_dump_work(struct work_struct *work)
 	if (!seninf)
 		pr_info("%s: filaed, seninf can't be NULL\n", __func__);
 	else
-		mtk_cam_seninf_dump(seninf, seninf_dump_work->frame_seq_no);
+		mtk_cam_seninf_dump(seninf, seninf_dump_work->frame_seq_no, false);
 
 	kfree(seninf_dump_work);
 }

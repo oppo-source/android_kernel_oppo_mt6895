@@ -261,14 +261,24 @@ static int mtk_set_brightness(struct led_classdev *led_cdev,
 
 	led_debug_log(led_dat, brightness, trans_level);
 
+	// #ifdef OPLUS_BUG_STABILITY
+	// set brightness by aal first and set aal_enable 1
+	// if failed, go to mtk_set_hw_brightness(should never happen)
+	call_notifier(LED_BRIGHTNESS_CHANGED, led_conf);
+	// #endif OPLUS_BUG_STABILITY
+
 	mutex_lock(&led_dat->led_access);
 	if (!led_conf->aal_enable) {
+		// #ifdef OPLUS_BUG_STABILITY
+		pr_err("Error, should never be here!!!");
+		// #endif OPLUS_BUG_STABILITY
 		mtk_set_hw_brightness(led_dat, trans_level);
 		led_dat->last_hw_brightness = trans_level;
 	}
 	mutex_unlock(&led_dat->led_access);
-
-	call_notifier(LED_BRIGHTNESS_CHANGED, led_conf);
+	// #ifdef OPLUS_BUG_STABILITY
+	// call_notifier(LED_BRIGHTNESS_CHANGED, led_conf);
+	// #endif OPLUS_BUG_STABILITY
 	return 0;
 
 }
@@ -418,10 +428,10 @@ int mt_leds_classdev_register(struct device *parent,
 		pr_info("print log init error!");
 
 	led_dat->last_brightness = led_dat->conf.cdev.brightness;
-
-	mtk_set_hw_brightness(led_dat,
-		brightness_maptolevel(&led_dat->conf, led_dat->last_brightness));
-
+//#ifndef OPLUS_BUG_STABILITY
+	//mtk_set_hw_brightness(led_dat,
+		//brightness_maptolevel(&led_dat->conf, led_dat->last_brightness));
+//#endif
 	pr_info("%s devm_led_classdev_register end! ", led_dat->conf.cdev.name);
 
 	return ret;

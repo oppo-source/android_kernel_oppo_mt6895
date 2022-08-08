@@ -43,9 +43,6 @@
 #include "imgsensor_ca.h"
 #endif
 
-#ifdef VENDOR_EDIT
-	#undef VENDOR_EDIT
-#endif
 #define USE_REMOSAIC 1
 
 #ifndef USE_TNP_BURST

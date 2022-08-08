@@ -69,6 +69,7 @@
 #define SMI_LARB_WRR_PORTx(id)		(SMI_LARB_WRR_PORT + ((id) << 2))
 #define SMI_LARB_DISABLE_ULTRA		0x70
 #define SMI_LARB_FORCE_ULTRA		0x78
+#define SMI_LARB_FORCE_PREULTRA		0x7c
 
 /* mt6893 */
 #define SMI_LARB_VC_PRI_MODE		(0x20)
@@ -78,6 +79,7 @@
 #define SMI_LARB_OSTD_MON_PORT(p)	(0x280 + ((p) << 2))
 #define INT_SMI_LARB_OSTD_MON_PORT(p)	(0x500 + SMI_LARB_OSTD_MON_PORT(p))
 #define INT_SMI_LARB_OSTDL_PORTx(id)	(0x500 + SMI_LARB_OSTDL_PORT + ((id) << 2))
+#define INT_SMI_LARB_FORCE_PREULTRA	(0x500 + (SMI_LARB_FORCE_PREULTRA))
 #define SMI_LARB_STAT			(0x0)
 /* SMI COMMON */
 #define SMI_BUS_SEL			0x220
@@ -167,6 +169,7 @@ struct mtk_smi_larb { /* larb: local arbiter */
 	const struct mtk_smi_larb_gen	*larb_gen;
 	int				larbid;
 	int				comm_port_id[LARB_MAX_COMMON];
+	int				suspend_check_port[LARB_MAX_COMMON];
 	u32				*mmu;
 
 	unsigned char			*bank;
@@ -176,7 +179,7 @@ struct mtk_smi_larb { /* larb: local arbiter */
 #define MAX_LARB_FOR_CLAMP		(6)
 #define RESET_CELL_NUM			(2)
 #define MAX_PD_CHECK_DEV_NUM	(2)
-#define SMI_OSTD_CNT_MASK	(0x1FFE000)
+#define SMI_OSTD_CNT_MASK	(0x7FFE000)
 
 struct mtk_smi_pd_log {
 	u8 power_status;
@@ -930,7 +933,7 @@ mtk_smi_larb_mt6895_bw_thrt_en[MTK_LARB_NR_MAX][2] = {
 	{14, 16}, {7, 8},
 	{0, 9}, {0, 0},
 	{0, 11}, {0, 9}, {0, 4},
-	{0, 31}, {0, 31},
+	{0, 0}, {0, 0},
 	{0, 25}, {0, 20}, {0, 30}, {0, 16},
 	{0, 0}, {0, 0},
 	{0, 19}, {0, 0}, {0, 0}, {0, 0},
@@ -1367,9 +1370,11 @@ mtk_smi_larb_mt6895_misc[MTK_LARB_NR_MAX][SMI_LARB_MISC_NR] = {
 	{{SMI_LARB_CMD_THRT_CON, 0x370256}, {INT_SMI_LARB_CMD_THRT_CON, 0x370256},
 	 {SMI_LARB_SW_FLAG, 0x1},},
 	{{SMI_LARB_CMD_THRT_CON, 0x370256}, {INT_SMI_LARB_CMD_THRT_CON, 0x370256},
-	 {SMI_LARB_SW_FLAG, 0x1},},
+	 {SMI_LARB_SW_FLAG, 0x1},  {SMI_LARB_FORCE_PREULTRA, 0xffffffff},
+	 {INT_SMI_LARB_FORCE_PREULTRA, 0xffffffff},},
 	{{SMI_LARB_CMD_THRT_CON, 0x370256}, {INT_SMI_LARB_CMD_THRT_CON, 0x370256},
-	 {SMI_LARB_SW_FLAG, 0x1},},
+	 {SMI_LARB_SW_FLAG, 0x1},  {SMI_LARB_FORCE_PREULTRA, 0xffffffff},
+	 {INT_SMI_LARB_FORCE_PREULTRA, 0xffffffff},},
 	{{SMI_LARB_CMD_THRT_CON, 0x370256}, {INT_SMI_LARB_CMD_THRT_CON, 0x370256},
 	 {SMI_LARB_SW_FLAG, 0x1}, {SMI_LARB_DISABLE_ULTRA, 0xffffffff},},
 	{{SMI_LARB_CMD_THRT_CON, 0x370256}, {INT_SMI_LARB_CMD_THRT_CON, 0x370256},
@@ -1765,6 +1770,9 @@ static int mtk_smi_larb_probe(struct platform_device *pdev)
 		larb->comm_port_id[i] = -1;
 		of_property_read_u32_index(dev->of_node, "mediatek,comm-port-id",
 						i, &larb->comm_port_id[i]);
+
+		of_property_read_u32_index(dev->of_node, "mediatek,suspend-check-port",
+						i, &larb->suspend_check_port[i]);
 	}
 
 
@@ -1824,24 +1832,12 @@ static int __maybe_unused mtk_smi_larb_resume(struct device *dev)
 {
 	struct mtk_smi_larb *larb = dev_get_drvdata(dev);
 	const struct mtk_smi_larb_gen *larb_gen = larb->larb_gen;
-	int ret, i;
+	int ret;
 
 	atomic_inc(&larb->smi.ref_count);
 	if (log_level & 1 << log_config_bit)
 		pr_info("[SMI]larb:%d callback get ref_count:%d\n",
 			larb->larbid, atomic_read(&larb->smi.ref_count));
-
-	/* enable related SMI common port */
-	for (i = 0; i < LARB_MAX_COMMON; i++) {
-		struct mtk_smi *common;
-
-		if (larb->comm_port_id[i] >= 0 && larb->smi_common_dev[i]) {
-			common = dev_get_drvdata(larb->smi_common_dev[i]);
-
-			writel(1 << larb->comm_port_id[i],
-				common->base + SMI_CLAMP_EN_CLR);
-		}
-	}
 
 	ret = mtk_smi_clk_enable(&larb->smi);
 	if (ret < 0) {
@@ -1879,14 +1875,14 @@ static u32 mtk_smi_common_ostd_check(struct mtk_smi *common,
 	for (i = 0; i < SMI_COMMON_LARB_NR_MAX; i++) {
 		if ((check_port >> i) & 1) {
 			val = readl_relaxed(common->base + SMI_DEBUG_S(i));
-			pr_notice("[SMI] common%d: %#x=%#x, power status = %d\n",
-				common->commid, SMI_DEBUG_S(i), val, flags);
+			//pr_notice("[SMI] common%d: %#x=%#x, power status = %d\n",
+			//	common->commid, SMI_DEBUG_S(i), val, flags);
 			if (val & SMI_OSTD_CNT_MASK) {
 				pr_notice("[SMI] common%d suspend check fail, power status = %d\n",
 					common->commid, flags);
 				raw_notifier_call_chain(&smi_driver_notifier_list,
 					common->commid, NULL);
-				ret = ret | (1 >> i);
+				ret = ret | (1 << i);
 			}
 		}
 	}
@@ -1987,11 +1983,39 @@ static int mtk_smi_pd_callback(struct notifier_block *nb,
 	return NOTIFY_OK;
 }
 
+void mtk_smi_larb_clamp(struct device *larbdev, bool on)
+{
+	struct mtk_smi_larb *larb = dev_get_drvdata(larbdev);
+	int i;
+	u32 clamp_reg = on ? SMI_CLAMP_EN_SET : SMI_CLAMP_EN_CLR;
+
+	if (unlikely(!larb))
+		return;
+	/* disable/enable related SMI common port */
+	for (i = 0; i < LARB_MAX_COMMON; i++) {
+		struct mtk_smi *common;
+
+		if (larb->comm_port_id[i] >= 0 && larb->smi_common_dev[i]) {
+			common = dev_get_drvdata(larb->smi_common_dev[i]);
+
+			writel(1 << larb->comm_port_id[i],
+				common->base + clamp_reg);
+
+			if (log_level & 1 << log_pd_callback)
+				pr_notice("[smi] %s on:%d larb%d, comm%d clamp: %#x = %#x\n",
+					__func__, on, larb->larbid, common->commid, SMI_CLAMP_EN,
+					readl(common->base + SMI_CLAMP_EN));
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(mtk_smi_larb_clamp);
+
 static int __maybe_unused mtk_smi_larb_suspend(struct device *dev)
 {
 	struct mtk_smi_larb *larb = dev_get_drvdata(dev);
 	const struct mtk_smi_larb_gen *larb_gen = larb->larb_gen;
-	int i;
+	int i, ret;
+	struct mtk_smi *common;
 
 	atomic_dec(&larb->smi.ref_count);
 	if (log_level & 1 << log_config_bit)
@@ -2007,21 +2031,20 @@ static int __maybe_unused mtk_smi_larb_suspend(struct device *dev)
 		raw_notifier_call_chain(&smi_driver_notifier_list, larb->larbid, larb);
 	}
 
+	for (i = 0; i < LARB_MAX_COMMON; i++) {
+		if (!larb->smi_common_dev[i] || !larb->suspend_check_port[i])
+			break;
+		common = dev_get_drvdata(larb->smi_common_dev[i]);
+		ret = mtk_smi_common_ostd_check(common, larb->suspend_check_port[i], 0xf);
+		if (ret)
+			raw_notifier_call_chain(&smi_driver_notifier_list, larb->larbid, larb);
+	}
+
 	if (larb_gen->sleep_ctrl)
 		larb_gen->sleep_ctrl(dev, true);
 
 	mtk_smi_clk_disable(&larb->smi);
-	/* disable related SMI common port */
-	for (i = 0; i < LARB_MAX_COMMON; i++) {
-		struct mtk_smi *common;
 
-		if (larb->comm_port_id[i] >= 0 && larb->smi_common_dev[i]) {
-			common = dev_get_drvdata(larb->smi_common_dev[i]);
-
-			writel(1 << larb->comm_port_id[i],
-				common->base + SMI_CLAMP_EN_SET);
-		}
-	}
 	return 0;
 }
 
@@ -2318,7 +2341,7 @@ mtk_smi_common_mt6895_misc[MTK_COMMON_NR_MAX][SMI_COMMON_MISC_NR] = {
 	{{SMI_L1LEN, 0xa}, {SMI_PREULTRA_MASK1, 0x2105}, {SMI_DCM, 0x4f1},
 	{SMI_DUMMY, 0x1},},/* SMI_MDP_SUB_COMMON1 */
 	{{SMI_L1LEN, 0xa}, {SMI_PREULTRA_MASK1, 0x2105}, {SMI_DCM, 0x4f1},
-	{SMI_DUMMY, 0x1},},/* SMI_SYS_SUB_COMMON2 */
+	{SMI_DUMMY, 0x1}, {SMI_CLAMP_EN_SET, 0x1},},/* SMI_SYS_SUB_COMMON2 */
 	{{SMI_L1LEN, 0xa}, {SMI_PREULTRA_MASK1, 0x2105}, {SMI_DCM, 0x4f1},
 	{SMI_DUMMY, 0x1},},/* SMI_SYS_SUB_COMMON3 */
 	{{SMI_L1LEN, 0xa}, {SMI_PREULTRA_MASK1, 0x2105}, {SMI_DCM, 0x4f1},

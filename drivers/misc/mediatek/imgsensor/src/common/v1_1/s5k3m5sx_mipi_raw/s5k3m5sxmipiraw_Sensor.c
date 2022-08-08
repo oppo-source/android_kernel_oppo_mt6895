@@ -62,7 +62,6 @@ static unsigned int g_platform_id;
 #define MODULE_ID_OFFSET 0x0000
 #endif
 
-
 static DEFINE_SPINLOCK(imgsensor_drv_lock);
 
 

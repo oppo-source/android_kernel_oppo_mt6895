@@ -33,6 +33,15 @@
 #if IS_ENABLED(CONFIG_MTK_ULTRASND_PROXIMITY)
 #include "../ultrasound/ultra_scp/mtk-scp-ultra-common.h"
 #endif
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+#include "../feedback/oplus_audio_kernel_fb.h"
+#ifdef dev_err
+#undef dev_err
+#define dev_err dev_err_fb
+#endif
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
+
 /* FORCE_FPGA_ENABLE_IRQ use irq in fpga */
 /* #define FORCE_FPGA_ENABLE_IRQ */
 
@@ -7142,6 +7151,12 @@ static int mt6895_afe_pcm_dev_probe(struct platform_device *pdev)
 
 err_pm_disable:
 	pm_runtime_disable(&pdev->dev);
+
+#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_FEEDBACK)
+	if (ret) {
+		ratelimited_fb("payload@@%s:failed ret=%d", __func__, ret);
+	}
+#endif /* CONFIG_OPLUS_FEATURE_MM_FEEDBACK */
 
 	return ret;
 }

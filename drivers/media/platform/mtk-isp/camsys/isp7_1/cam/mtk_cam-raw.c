@@ -2708,7 +2708,7 @@ static void raw_irq_handle_tg_overrun_err(struct mtk_raw_device *raw_dev,
 		dev_info(raw_dev->dev, "%s: req(%d) can't be found for dump\n",
 			__func__, dequeued_frame_seq_no);
 		if (0 && raw_dev->sof_count > 3 && ctx->seninf)
-			mtk_cam_seninf_dump(ctx->seninf, (u32)dequeued_frame_seq_no);
+			mtk_cam_seninf_dump(ctx->seninf, (u32)dequeued_frame_seq_no, false);
 	}
 }
 
@@ -2943,6 +2943,8 @@ static int mtk_raw_sd_subscribe_event(struct v4l2_subdev *subdev,
 		return v4l2_event_subscribe(fh, sub, 0, NULL);
 	case V4L2_EVENT_REQUEST_DUMPED:
 		return v4l2_event_subscribe(fh, sub, 0, NULL);
+	case V4L2_EVENT_ESD_RECOVERY:
+		return v4l2_event_subscribe(fh, sub, 0, NULL);
 
 	default:
 		return -EINVAL;
@@ -2964,7 +2966,7 @@ static int mtk_raw_available_resource(struct mtk_raw *raw)
 				res_status |= 1 << j;
 		}
 	}
-	dev_dbg(raw->cam_dev, "%s raw_status:0x%x Available Engine:A/B/C:%d/%d/%d\n",
+	dev_info(raw->cam_dev, "%s raw_status:0x%x Available Engine:A/B/C:%d/%d/%d\n",
 		 __func__, res_status,
 			!(res_status & (1 << MTKCAM_SUBDEV_RAW_0)),
 			!(res_status & (1 << MTKCAM_SUBDEV_RAW_1)),
@@ -5881,7 +5883,7 @@ static int mtk_raw_pipeline_register(unsigned int id, struct device *dev,
 	int ret;
 
 	pipe->id = id;
-	pipe->dynamic_exposure_num_max = 3;
+	pipe->dynamic_exposure_num_max = 1;
 
 	/* Initialize subdev */
 	v4l2_subdev_init(sd, &mtk_raw_subdev_ops);

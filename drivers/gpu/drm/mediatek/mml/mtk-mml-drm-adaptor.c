@@ -87,8 +87,9 @@ enum mml_mode mml_drm_query_cap(struct mml_drm_ctx *ctx,
 	}
 
 	/* for alpha rotate */
-	if (MML_FMT_IS_ARGB(info->src.format) &&
-		MML_FMT_IS_ARGB(info->dest[0].data.format)) {
+	if (info->alpha &&
+	    MML_FMT_IS_ARGB(info->src.format) &&
+	    MML_FMT_IS_ARGB(info->dest[0].data.format)) {
 		const struct mml_frame_dest *dest = &info->dest[0];
 		u32 srccw = dest->crop.r.width;
 		u32 srcch = dest->crop.r.height;
@@ -536,10 +537,14 @@ static void task_buf_put(struct mml_task *task)
 		mml_msg("[drm]release dest %hhu iova %#011llx",
 			i, task->buf.dest[i].dma[0].iova);
 		mml_buf_put(&task->buf.dest[i]);
+		if (task->buf.dest[i].fence)
+			dma_fence_put(task->buf.dest[i].fence);
 	}
 	mml_msg("[drm]release src iova %#011llx",
 		task->buf.src.dma[0].iova);
 	mml_buf_put(&task->buf.src);
+	if (task->buf.src.fence)
+		dma_fence_put(task->buf.src.fence);
 	mml_trace_ex_end();
 }
 

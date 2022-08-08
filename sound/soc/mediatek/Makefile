@@ -21,9 +21,9 @@ endif
 ifneq ($(wildcard $(srctree)/sound/soc/mediatek/mt6885),)
 obj-$(CONFIG_SND_SOC_MT6885) += mt6885/
 endif
-ifneq ($(wildcard $(srctree)/sound/soc/mediatek/mt6983),)
-obj-$(CONFIG_SND_SOC_MT6983) += mt6983/
-endif
+#ifneq ($(wildcard $(srctree)/sound/soc/mediatek/mt6983),)
+#obj-$(CONFIG_SND_SOC_MT6983) += mt6983/
+#endif
 ifneq ($(wildcard $(srctree)/sound/soc/mediatek/mt6879),)
 obj-$(CONFIG_SND_SOC_MT6879) += mt6879/
 endif

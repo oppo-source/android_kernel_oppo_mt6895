@@ -48,6 +48,15 @@ inline unsigned int log2_enc(__u32 value)
 	return x;
 }
 
+void mtk_venc_do_gettimeofday(struct timespec64 *tv)
+{
+	struct timespec64 now;
+
+	ktime_get_real_ts64(&now);
+	tv->tv_sec = now.tv_sec;
+	tv->tv_nsec = now.tv_nsec; // micro sec = ((long)(now.tv_nsec)/1000);
+}
+
 static void set_venc_vcp_data(struct mtk_vcodec_ctx *ctx, enum vcp_reserve_mem_id_t id)
 {
 	struct venc_enc_param enc_prm;
@@ -198,7 +207,6 @@ void mtk_enc_put_buf(struct mtk_vcodec_ctx *ctx)
 			dst_vb2_v4l2->vb2_buf.timestamp =
 				src_vb2_v4l2->vb2_buf.timestamp;
 			dst_vb2_v4l2->timecode = src_vb2_v4l2->timecode;
-			dst_vb2_v4l2->flags |= src_vb2_v4l2->flags;
 			dst_vb2_v4l2->sequence = src_vb2_v4l2->sequence;
 			dst_buf = &dst_vb2_v4l2->vb2_buf;
 			dst_buf->planes[0].bytesused = rResult.bs_size;
@@ -727,7 +735,7 @@ static struct mtk_q_data *mtk_venc_get_q_data(struct mtk_vcodec_ctx *ctx,
 static int vidioc_try_fmt(struct v4l2_format *f, struct mtk_video_fmt *fmt,
 			  struct mtk_vcodec_ctx *ctx)
 {
-	struct v4l2_pix_format_mplane *pix_fmt_mp = &f->fmt.pix_mp;
+	struct v4l2_pix_format_mplane *pix_fmt_mp = NULL;
 	int org_w, org_h, i;
 	int bitsPP = 8;  /* bits per pixel */
 	__u32 bs_fourcc;
@@ -742,6 +750,11 @@ static int vidioc_try_fmt(struct v4l2_format *f, struct mtk_video_fmt *fmt,
 
 	struct mtk_codec_framesizes *spec_size_info = NULL;
 
+	if (IS_ERR_OR_NULL(fmt)) {
+		mtk_v4l2_err("fail to get mtk_video_fmt");
+		return -EINVAL;
+	}
+	pix_fmt_mp = &f->fmt.pix_mp;
 	pix_fmt_mp->field = V4L2_FIELD_NONE;
 
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
@@ -1186,6 +1199,11 @@ static int vidioc_venc_s_fmt_cap(struct file *file, void *priv,
 	int i, ret;
 	struct mtk_video_fmt *fmt;
 
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
+
 	mtk_v4l2_debug(4, "[%d] type %d", ctx->id, f->type);
 	vq = v4l2_m2m_get_vq(ctx->m2m_ctx, f->type);
 	if (!vq) {
@@ -1259,6 +1277,11 @@ static int vidioc_venc_s_fmt_out(struct file *file, void *priv,
 	int ret, i;
 	struct mtk_video_fmt *fmt;
 
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
+
 	mtk_v4l2_debug(4, "[%d] type %d", ctx->id, f->type);
 	vq = v4l2_m2m_get_vq(ctx->m2m_ctx, f->type);
 	if (!vq) {
@@ -1320,6 +1343,11 @@ static int vidioc_venc_g_fmt(struct file *file, void *priv,
 	struct mtk_q_data *q_data;
 	int i;
 
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
+
 	vq = v4l2_m2m_get_vq(ctx->m2m_ctx, f->type);
 	if (!vq)
 		return -EINVAL;
@@ -1354,6 +1382,11 @@ static int vidioc_try_fmt_vid_cap_mplane(struct file *file, void *priv,
 	struct mtk_video_fmt *fmt;
 	struct mtk_vcodec_ctx *ctx = fh_to_ctx(priv);
 
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
+
 	fmt = mtk_venc_find_format(f, MTK_FMT_ENC);
 	if (!fmt) {
 		f->fmt.pix.pixelformat =
@@ -1378,6 +1411,11 @@ static int vidioc_try_fmt_vid_out_mplane(struct file *file, void *priv,
 {
 	struct mtk_video_fmt *fmt;
 	struct mtk_vcodec_ctx *ctx = fh_to_ctx(priv);
+
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
 
 	fmt = mtk_venc_find_format(f, MTK_FMT_FRAME);
 	if (!fmt) {
@@ -3424,7 +3462,7 @@ int mtk_vcodec_enc_queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->ops             = &mtk_venc_vb2_ops;
 	venc_dma_contig_memops = vb2_dma_contig_memops;
 	venc_dma_contig_memops.attach_dmabuf = mtk_venc_dc_attach_dmabuf;
-	src_vq->mem_ops         = &vb2_dma_contig_memops;
+	src_vq->mem_ops         = &venc_dma_contig_memops;
 	mtk_v4l2_debug(4, "src_vq use vb2_dma_contig_memops");
 	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 	src_vq->lock            = &ctx->q_mutex;

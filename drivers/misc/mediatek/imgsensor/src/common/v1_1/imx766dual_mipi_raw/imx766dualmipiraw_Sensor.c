@@ -40,7 +40,6 @@
 #include "imx766dualmipiraw_Sensor.h"
 #include "imx766dual_eeprom.h"
 
-#undef VENDOR_EDIT
 
 #define USE_BURST_MODE 1
 

@@ -302,7 +302,7 @@ static struct vb2_buffer *get_display_buffer(struct mtk_vcodec_ctx *ctx,
  * previous sps/pps/resolution change decode, or do nothing if user
  * space still owns this buffer
  */
-static struct vb2_buffer *get_free_buffer(struct mtk_vcodec_ctx *ctx)
+static struct vb2_v4l2_buffer *get_free_buffer(struct mtk_vcodec_ctx *ctx)
 {
 	struct mtk_video_dec_buf *dstbuf;
 	struct vdec_fb *free_frame_buffer = NULL;
@@ -355,22 +355,25 @@ static struct vb2_buffer *get_free_buffer(struct mtk_vcodec_ctx *ctx)
 		dstbuf->used = false;
 		if ((dstbuf->queued_in_vb2) && (dstbuf->queued_in_v4l2)) {
 			if ((free_frame_buffer->status & FB_ST_EOS) &&
-				(ctx->input_driven == INPUT_DRIVEN_PUT_FRM) &&
-				(ctx->dec_eos_vb == NULL)) {
+				(ctx->input_driven == INPUT_DRIVEN_PUT_FRM)) {
 				/*
 				 * Buffer status has EOS flag, which is capture buffer
-				 * used for EOS when input driven. So set to dec_eos_vb
-				 * and don't queue to rdy_queue to avoid double dq
-				 * from vb2 queue
+				 * used for EOS when input driven. So set last buffer flag
+				 * and queue to done queue.
 				 */
-				ctx->dec_eos_vb = (void*)&dstbuf->vb;
 				mtk_v4l2_debug(2, "[%d]status=%x not queue id=%d to rdy_queue %d %d for EOS",
 					ctx->id, free_frame_buffer->status,
 					dstbuf->vb.vb2_buf.index,
 					dstbuf->queued_in_vb2,
 					dstbuf->queued_in_v4l2);
 				free_frame_buffer->status &= ~FB_ST_EOS;
-				dstbuf->queued_in_vb2 = false; // not queue to rdy_queue
+
+				dstbuf->vb.vb2_buf.timestamp = 0;
+				memset(&dstbuf->vb.timecode, 0, sizeof(struct v4l2_timecode));
+				dstbuf->vb.flags |= V4L2_BUF_FLAG_LAST;
+				for (i = 0; i < free_frame_buffer->num_planes; i++)
+					vb2_set_plane_payload(&dstbuf->vb.vb2_buf, i, 0);
+				v4l2_m2m_buf_done(&dstbuf->vb, VB2_BUF_STATE_DONE);
 			} else if (free_frame_buffer->status == FB_ST_FREE) {
 				/*
 				 * After decode sps/pps or non-display buffer, we don't
@@ -383,8 +386,8 @@ static struct vb2_buffer *get_free_buffer(struct mtk_vcodec_ctx *ctx)
 					ctx->id, free_frame_buffer->status,
 					dstbuf->vb.vb2_buf.index,
 					dstbuf->queued_in_vb2);
-				v4l2_m2m_buf_queue_check(
-					ctx->m2m_ctx, &dstbuf->vb);
+				if (v4l2_m2m_buf_queue_check(ctx->m2m_ctx, &dstbuf->vb) < 0)
+					goto err_in_rdyq;
 			} else {
 				mtk_v4l2_debug(4, "[%d]status=%x reference free queue id=%d %d %d",
 					ctx->id, free_frame_buffer->status,
@@ -409,7 +412,8 @@ static struct vb2_buffer *get_free_buffer(struct mtk_vcodec_ctx *ctx)
 				ctx->id, free_frame_buffer->status,
 				dstbuf->vb.vb2_buf.index);
 			dstbuf->queued_in_vb2 = true;
-			v4l2_m2m_buf_queue_check(ctx->m2m_ctx, &dstbuf->vb);
+			if (v4l2_m2m_buf_queue_check(ctx->m2m_ctx, &dstbuf->vb) < 0)
+				goto err_in_rdyq;
 		} else {
 			/*
 			 * Codec driver do not need to reference this capture
@@ -428,7 +432,16 @@ static struct vb2_buffer *get_free_buffer(struct mtk_vcodec_ctx *ctx)
 	}
 	mutex_unlock(&ctx->buf_lock);
 
-	return &dstbuf->vb.vb2_buf;
+	return &dstbuf->vb;
+err_in_rdyq:
+	for (i = 0; i < free_frame_buffer->num_planes; i++) {
+		get_file(free_frame_buffer->fb_base[i].dmabuf->file);
+		mtk_v4l2_debug(4, "[Ref cnt] id=%d Ref get dma %p",
+			free_frame_buffer->index, free_frame_buffer->fb_base[i].dmabuf);
+	}
+	mutex_unlock(&ctx->buf_lock);
+
+	return &dstbuf->vb;
 }
 
 static struct vb2_buffer *get_free_bs_buffer(struct mtk_vcodec_ctx *ctx,
@@ -495,13 +508,18 @@ static void clean_display_buffer(struct mtk_vcodec_ctx *ctx, bool got_early_eos)
 	} while (framptr);
 }
 
-static void clean_free_fm_buffer(struct mtk_vcodec_ctx *ctx)
+static bool clean_free_fm_buffer(struct mtk_vcodec_ctx *ctx)
 {
-	struct vb2_buffer *framptr;
+	struct vb2_v4l2_buffer *framptr_vb;
+	bool has_eos = false;
 
 	do {
-		framptr = get_free_buffer(ctx);
-	} while (framptr);
+		framptr_vb = get_free_buffer(ctx);
+		if (framptr_vb != NULL && (framptr_vb->flags & V4L2_BUF_FLAG_LAST))
+			has_eos = true;
+	} while (framptr_vb);
+
+	return has_eos;
 }
 
 static void mtk_vdec_queue_res_chg_event(struct mtk_vcodec_ctx *ctx)
@@ -695,6 +713,7 @@ int mtk_vdec_put_fb(struct mtk_vcodec_ctx *ctx, enum mtk_put_buffer_type type, b
 	struct vb2_buffer *src_buf, *dst_buf;
 	struct vdec_fb *pfb;
 	int i, ret = 0;
+	bool has_eos;
 
 	mtk_v4l2_debug(1, "type = %d", type);
 	src_vb2_v4l2 = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
@@ -724,20 +743,9 @@ int mtk_vdec_put_fb(struct mtk_vcodec_ctx *ctx, enum mtk_put_buffer_type type, b
 					ctx->state == MTK_STATE_FLUSH);
 
 			/* update dst buf status */
-			if (ctx->input_driven == INPUT_DRIVEN_PUT_FRM
-				&& ctx->dec_eos_vb != NULL) {
-				dst_vb2_v4l2 =
-				    (struct vb2_v4l2_buffer *)ctx->dec_eos_vb;
-				dst_buf = &(dst_vb2_v4l2->vb2_buf);
-				ctx->dec_eos_vb = NULL;
-			} else {
-				if (ctx->input_driven == INPUT_DRIVEN_PUT_FRM)
-					mtk_v4l2_debug(0, "EOS dst not exit, need find from rdy_queue");
-				dst_vb2_v4l2 = v4l2_m2m_dst_buf_remove(ctx->m2m_ctx);
-				dst_buf = &dst_vb2_v4l2->vb2_buf;
-			}
-			if (ctx->state == MTK_STATE_FLUSH
-				|| ret != 0 || dst_buf == NULL) {
+			dst_vb2_v4l2 = v4l2_m2m_dst_buf_remove(ctx->m2m_ctx);
+			dst_buf = &dst_vb2_v4l2->vb2_buf;
+			if (ctx->state == MTK_STATE_FLUSH || ret != 0 || dst_buf == NULL) {
 				mtk_v4l2_debug(0, "wait EOS dst break!state %d, ret %d, dst_buf %p",
 				ctx->state, ret, dst_buf);
 				return 0;
@@ -747,18 +755,14 @@ int mtk_vdec_put_fb(struct mtk_vcodec_ctx *ctx, enum mtk_put_buffer_type type, b
 				struct vb2_v4l2_buffer, vb2_buf);
 			dst_buf_info = container_of(dst_vb2_v4l2,
 				struct mtk_video_dec_buf, vb);
-			if (ctx->input_driven == INPUT_DRIVEN_PUT_FRM)
-				dst_buf_info->frame_buffer.status &= ~FB_ST_EOS;
 
 			dst_buf_info->vb.vb2_buf.timestamp = 0;
 			memset(&dst_buf_info->vb.timecode, 0, sizeof(struct v4l2_timecode));
 			dst_vb2_v4l2->flags |= V4L2_BUF_FLAG_LAST;
 			pfb = &dst_buf_info->frame_buffer;
 			for (i = 0; i < pfb->num_planes; i++)
-				vb2_set_plane_payload(&dst_buf_info->vb.vb2_buf,
-					i, 0);
-			v4l2_m2m_buf_done(&dst_buf_info->vb,
-				VB2_BUF_STATE_DONE);
+				vb2_set_plane_payload(&dst_buf_info->vb.vb2_buf, i, 0);
+			v4l2_m2m_buf_done(&dst_buf_info->vb, VB2_BUF_STATE_DONE);
 		}
 
 		mtk_vdec_queue_stop_play_event(ctx);
@@ -769,7 +773,9 @@ int mtk_vdec_put_fb(struct mtk_vcodec_ctx *ctx, enum mtk_put_buffer_type type, b
 			(type == PUT_BUFFER_WORKER  &&
 			src_buf_info->lastframe == EOS_WITH_DATA) ||
 			ctx->eos_type == EOS_WITH_DATA);
-		clean_free_fm_buffer(ctx);
+		has_eos = clean_free_fm_buffer(ctx);
+		if (ctx->input_driven && has_eos)
+			mtk_vdec_queue_stop_play_event(ctx);
 	}
 
 	if (ctx->input_driven)
@@ -885,7 +891,8 @@ static void mtk_vdec_worker(struct work_struct *work)
 			drain_fb.status = FB_ST_EOS;
 		vdec_if_decode(ctx, NULL, &drain_fb, &src_chg);
 
-		mtk_vdec_put_fb(ctx, PUT_BUFFER_WORKER, false);
+		if (!ctx->input_driven)
+			mtk_vdec_put_fb(ctx, PUT_BUFFER_WORKER, false);
 		v4l2_m2m_src_buf_remove(ctx->m2m_ctx);
 		src_buf_info->lastframe = NON_EOS;
 		clean_free_bs_buffer(ctx, NULL);
@@ -1565,9 +1572,14 @@ static int vidioc_vdec_subscribe_evt(struct v4l2_fh *fh,
 
 static int vidioc_try_fmt(struct v4l2_format *f, struct mtk_video_fmt *fmt)
 {
-	struct v4l2_pix_format_mplane *pix_fmt_mp = &f->fmt.pix_mp;
+	struct v4l2_pix_format_mplane *pix_fmt_mp = NULL;
 	unsigned int i;
 
+	if (IS_ERR_OR_NULL(fmt)) {
+		mtk_v4l2_err("fail to get mtk_video_fmt");
+		return -EINVAL;
+	}
+	pix_fmt_mp = &f->fmt.pix_mp;
 	pix_fmt_mp->field = V4L2_FIELD_NONE;
 
 	if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -1647,6 +1659,11 @@ static int vidioc_try_fmt_vid_cap_mplane(struct file *file, void *priv,
 	struct mtk_video_fmt *fmt;
 	struct mtk_vcodec_ctx *ctx = fh_to_ctx(priv);
 
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
+
 	fmt = mtk_vdec_find_format(ctx, f, MTK_FMT_FRAME);
 	if (!fmt && default_cap_fmt_idx < MTK_MAX_DEC_CODECS_SUPPORT) {
 		f->fmt.pix.pixelformat =
@@ -1665,6 +1682,11 @@ static int vidioc_try_fmt_vid_out_mplane(struct file *file, void *priv,
 	struct v4l2_pix_format_mplane *pix_fmt_mp = &f->fmt.pix_mp;
 	struct mtk_video_fmt *fmt;
 	struct mtk_vcodec_ctx *ctx = fh_to_ctx(priv);
+
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
 
 	fmt = mtk_vdec_find_format(ctx, f, MTK_FMT_DEC);
 	if (!fmt && default_out_fmt_idx < MTK_MAX_DEC_CODECS_SUPPORT) {
@@ -1766,6 +1788,11 @@ static int vidioc_vdec_s_fmt(struct file *file, void *priv,
 	struct mtk_q_data *q_data;
 	int ret = 0;
 	struct mtk_video_fmt *fmt;
+
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
 
 	mtk_v4l2_debug(4, "[%d] type %d", ctx->id, f->type);
 
@@ -1922,6 +1949,11 @@ static int vidioc_vdec_g_fmt(struct file *file, void *priv,
 	struct mtk_q_data *q_data;
 	u32     fourcc;
 	unsigned int i = 0;
+
+	if (IS_ERR_OR_NULL(f)) {
+		mtk_v4l2_err("fail to get v4l2_format");
+		return -EINVAL;
+	}
 
 	vq = v4l2_m2m_get_vq(ctx->m2m_ctx, f->type);
 	if (!vq) {
@@ -2267,6 +2299,7 @@ static void vb2ops_vdec_buf_queue(struct vb2_buffer *vb)
 			mtk_v4l2_err("[%d]: vdec_if_init() fail ret=%d",
 						 ctx->id, ret);
 			ctx->state = MTK_STATE_ABORT;
+			mtk_vdec_queue_error_event(ctx);
 			return;
 		}
 		ctx->state = MTK_STATE_INIT;
