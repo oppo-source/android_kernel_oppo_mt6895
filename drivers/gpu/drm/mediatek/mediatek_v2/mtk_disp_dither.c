@@ -280,37 +280,65 @@ static void mtk_dither_config(struct mtk_ddp_comp *comp,
 
 	priv->pwr_sta = 1;
 
-	if (cfg->bpc == 8) { /* 888 */
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DITHER_REG(15),
-			       0x20200001, ~0);
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DITHER_REG(16),
-			       0x20202020, ~0);
-	} else if (cfg->bpc == 5) { /* 565 */
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DITHER_REG(15),
-			       0x50500001, ~0);
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DITHER_REG(16),
-			       0x50504040, ~0);
-	} else if (cfg->bpc == 6) { /* 666 */
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DITHER_REG(15),
-			       0x40400001, ~0);
-		cmdq_pkt_write(handle, comp->cmdq_base,
-			       comp->regs_pa + DITHER_REG(16),
-			       0x40404040, ~0);
-	} else if (cfg->bpc > 8) {
-		/* High depth LCM, no need dither */
-		DDPINFO("%s: High depth LCM (bpp = %u), no dither\n",
-			__func__, cfg->bpc);
+	if (g_gamma_data_mode == 0) {
+		if (cfg->bpc == 8) { /* 888 */
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(15),
+				       0x20200001, ~0);
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(16),
+				       0x20202020, ~0);
+		} else if (cfg->bpc == 5) { /* 565 */
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(15),
+				       0x50500001, ~0);
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(16),
+				       0x50504040, ~0);
+		} else if (cfg->bpc == 6) { /* 666 */
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(15),
+				       0x40400001, ~0);
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(16),
+				       0x40404040, ~0);
+		} else if (cfg->bpc > 8) {
+			/* High depth LCM, no need dither */
+			DDPINFO("%s: High depth LCM (bpp = %u), no dither\n",
+				__func__, cfg->bpc);
+		} else {
+			/* Invalid dither bpp, bypass dither */
+			/* FIXME: this case would cause dither hang */
+			DDPINFO("%s: Invalid dither bpp = %u\n",
+				__func__, cfg->bpc);
+			enable = 0;
+		}
 	} else {
-		/* Invalid dither bpp, bypass dither */
-		/* FIXME: this case would cause dither hang */
-		DDPINFO("%s: Invalid dither bpp = %u\n",
-			__func__, cfg->bpc);
-		enable = 0;
+		if (cfg->bpc == 10) { /* 101010 */
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(15),
+				       0x20200001, ~0);
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(16),
+				       0x20202020, ~0);
+		} else if (cfg->bpc == 8) { /* 888 */
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(15),
+				       0x40400001, ~0);
+			cmdq_pkt_write(handle, comp->cmdq_base,
+				       comp->regs_pa + DITHER_REG(16),
+				       0x40404040, ~0);
+		} else if (cfg->bpc > 10) {
+			/* High depth LCM, no need dither */
+			DDPINFO("%s: High depth LCM (bpp = %u), no dither\n",
+				__func__, cfg->bpc);
+		} else {
+			/* Invalid dither bpp, bypass dither */
+			/* FIXME: this case would cause dither hang */
+			DDPINFO("%s: Invalid dither bpp = %u\n",
+				__func__, cfg->bpc);
+			enable = 0;
+		}
 	}
 
 	if (enable == 1) {
@@ -582,6 +610,7 @@ static int mtk_dither_user_cmd(struct mtk_ddp_comp *comp,
 			mtk_dither_set_param(comp_dither1, handle, relay, mode);
 		}
 	}
+	break;
 	case BYPASS_DITHER:
 	{
 		int *value = data;
@@ -712,7 +741,7 @@ void mtk_dither_dump(struct mtk_ddp_comp *comp)
 {
 	void __iomem *baddr = comp->regs;
 
-	DDPDUMP("== %s REGS:0x%x ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
+	DDPDUMP("== %s REGS:0x%llx ==\n", mtk_dump_comp_str(comp), comp->regs_pa);
 	mtk_cust_dump_reg(baddr, 0x0, 0x20, 0x30, -1);
 	mtk_cust_dump_reg(baddr, 0x24, 0x28, -1, -1);
 }
@@ -823,6 +852,16 @@ static int mtk_disp_dither_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct mtk_disp_dither_data mt6765_dither_driver_data = {
+	.support_shadow     = false,
+	.need_bypass_shadow = false,
+};
+
+static const struct mtk_disp_dither_data mt6768_dither_driver_data = {
+	.support_shadow     = false,
+	.need_bypass_shadow = false,
+};
+
 static const struct mtk_disp_dither_data mt6779_dither_driver_data = {
 	.support_shadow     = false,
 	.need_bypass_shadow = false,
@@ -869,6 +908,10 @@ static const struct mtk_disp_dither_data mt6855_dither_driver_data = {
 };
 
 static const struct of_device_id mtk_disp_dither_driver_dt_match[] = {
+	{ .compatible = "mediatek,mt6765-disp-dither",
+	  .data = &mt6765_dither_driver_data},
+	{ .compatible = "mediatek,mt6768-disp-dither",
+	  .data = &mt6768_dither_driver_data},
 	{ .compatible = "mediatek,mt6779-disp-dither",
 	  .data = &mt6779_dither_driver_data},
 	{ .compatible = "mediatek,mt6789-disp-dither",

@@ -20,7 +20,7 @@
 
 #include <mtk_iommu.h>
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 #include <mach/mt_iommu.h>
 #include "mach/pseudo_m4u.h"
 #include "smi_port.h"
@@ -50,7 +50,7 @@ void mtk_venc_init_ctx_pm(struct mtk_vcodec_ctx *ctx)
 	}
 
 	pr_info("slbc_request %d, 0x%x, 0x%llx\n",
-	ctx->use_slbc, ctx->slbc_addr, ctx->sram_data.paddr);
+	ctx->use_slbc, ctx->slbc_addr, (unsigned long long)ctx->sram_data.paddr);
 }
 
 int mtk_vcodec_init_enc_pm(struct mtk_vcodec_dev *mtkdev)
@@ -76,7 +76,7 @@ int mtk_vcodec_init_enc_pm(struct mtk_vcodec_dev *mtkdev)
 
 	node = of_parse_phandle(dev->of_node, "mediatek,larbs", 0);
 	if (!node) {
-		mtk_v4l2_err("no mediatek,larb found");
+		mtk_v4l2_err("no mediatek,larbs found");
 		return -1;
 	}
 	for (larb_index = 0; larb_index < MTK_VENC_MAX_LARB_COUNT; larb_index++) {
@@ -137,16 +137,22 @@ void mtk_vcodec_enc_clock_on(struct mtk_vcodec_ctx *ctx, int core_id)
 	struct mtk_vcodec_pm *pm = &ctx->dev->pm;
 	int ret;
 	int i, larb_port_num, larb_id;
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 	struct M4U_PORT_STRUCT port;
 #endif
 	int larb_index;
-	int j, clk_id;
+	int j;
 	struct mtk_venc_clks_data *clks_data;
 	struct mtk_vcodec_dev *dev = NULL;
+	unsigned int clk_id;
 	unsigned long flags;
 
 	dev = ctx->dev;
+
+	if (core_id < 0) {
+		mtk_v4l2_err("invalid core_id %d", core_id);
+		return;
+	}
 
 #ifndef FPGA_PWRCLK_API_DISABLE
 	time_check_start(MTK_FMT_ENC, core_id);
@@ -218,7 +224,7 @@ void mtk_vcodec_enc_clock_on(struct mtk_vcodec_ctx *ctx, int core_id)
 
 	time_check_end(MTK_FMT_ENC, core_id, 50);
 
-#ifdef CONFIG_MTK_PSEUDO_M4U
+#if IS_ENABLED(CONFIG_MTK_PSEUDO_M4U)
 	time_check_start(MTK_FMT_ENC, core_id);
 	if (core_id == MTK_VENC_CORE_0) {
 		larb_port_num = SMI_LARB7_PORT_NUM;
@@ -242,10 +248,11 @@ void mtk_vcodec_enc_clock_on(struct mtk_vcodec_ctx *ctx, int core_id)
 void mtk_vcodec_enc_clock_off(struct mtk_vcodec_ctx *ctx, int core_id)
 {
 	struct mtk_vcodec_pm *pm = &ctx->dev->pm;
-	int i, clk_id;
+	int i;
 	int larb_index;
 	struct mtk_venc_clks_data *clks_data;
 	struct mtk_vcodec_dev *dev = NULL;
+	unsigned int clk_id;
 	unsigned long flags;
 
 	dev = ctx->dev;
